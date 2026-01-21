@@ -186,7 +186,7 @@ erDiagram
         string first_name
         string last_name
         string phone
-        string password_hash NULL
+        string password_hash
         boolean is_admin
         boolean is_active
         int team_id FK
@@ -265,7 +265,7 @@ erDiagram
     EVENT_GUESTS {
         int id PK
         int registration_id FK
-        int member_id FK NULL
+        int member_id FK
         string first_name
         string last_name
         datetime added_at
@@ -287,8 +287,8 @@ erDiagram
     SCORES {
         int id PK
         int event_id FK
-        int participant_id FK NULL
-        int guest_id FK NULL
+        int participant_id FK
+        int guest_id FK
         int total_score
         int entered_by FK
         datetime created_at
