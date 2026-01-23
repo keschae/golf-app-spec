@@ -1,8 +1,8 @@
 # MCSGA Golf Association Portal
 ## Application Specification and Requirements Document
 
-**Version:** 1.3
-**Date:** January 20, 2026
+**Version:** 1.4
+**Date:** January 23, 2026
 **Status:** Draft
 
 ---
@@ -176,6 +176,7 @@ erDiagram
     MEMBERS ||--o{ EVENT_GUESTS : can_be_guest
     EVENT_PARTICIPANTS ||--o| SCORES : has_score
     EVENT_GUESTS ||--o| SCORES : has_score
+    EVENTS ||--o{ TEE_TIME_SLOTS : has_slots
     TEAMS ||--o{ TEE_TIME_REQUESTS : requests
     EVENTS ||--o{ TEE_TIME_REQUESTS : for
     MEMBERS ||--o{ AUDIT_LOG : generates
@@ -271,17 +272,25 @@ erDiagram
         datetime added_at
     }
     
+    TEE_TIME_SLOTS {
+        int id PK
+        int event_id FK
+        int slot_number
+        time slot_time
+        text assignment_text
+        datetime assigned_at
+        int assigned_by FK
+    }
+    
     TEE_TIME_REQUESTS {
         int id PK
         int event_id FK
         int team_id FK
         int requested_by FK
-        time preferred_time
+        int golfer_count
+        text notes
         string status
-        time assigned_time
-        int assigned_by FK
         datetime requested_at
-        datetime assigned_at
     }
     
     SCORES {
@@ -454,8 +463,25 @@ Stores guest players who participate in events with a team. Guests can be either
 >
 > **Validation**: Before adding a member as a guest, the system must verify they are not already registered as a participant (in EVENT_PARTICIPANTS) for the same event by any team.
 
-#### 3.2.10 TEE_TIME_REQUESTS
-Manages tee time requests and assignments.
+#### 3.2.10 TEE_TIME_SLOTS (NEW)
+Stores auto-generated tee time slots for events. Each slot accommodates up to 4 golfers.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | INT | PK, AUTO_INCREMENT | Unique identifier |
+| event_id | INT | FK, NOT NULL | Reference to event |
+| slot_number | INT | NOT NULL | Sequential slot number (1, 2, 3...) |
+| slot_time | TIME | NOT NULL | The tee time for this slot |
+| assignment_text | TEXT | NULL | Freeform text for golfer assignments (e.g., "Legal Eagles: Tom Johnson, Bob Smith and guest Ryan Smith") |
+| assigned_at | DATETIME | NULL | When assignment was made |
+| assigned_by | INT | FK, NULL | Admin who made assignment |
+
+> **Auto-generation**: Slots are auto-generated based on the event's `tee_time_start` and the course's `tee_time_interval`. Generation stops at approximately 12:00 noon (last slot that starts before noon).
+
+> **Slot Capacity**: Each slot accommodates up to 4 golfers. Teams with more golfers span multiple slots (e.g., 8 golfers = 2 slots).
+
+#### 3.2.11 TEE_TIME_REQUESTS (Simplified)
+Stores team tee time requests as a queue. Administrators assign slots on a first-come, first-served basis.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
@@ -463,16 +489,16 @@ Manages tee time requests and assignments.
 | event_id | INT | FK, NOT NULL | Reference to event |
 | team_id | INT | FK, NOT NULL | Reference to team |
 | requested_by | INT | FK, NOT NULL | Member who made request |
-| preferred_time | TIME | NULL | Requested preferred time |
+| golfer_count | INT | NOT NULL | Number of golfers requesting tee time |
+| notes | TEXT | NULL | Optional notes from captain |
 | status | VARCHAR(50) | DEFAULT 'pending' | Status (pending, assigned, cancelled) |
-| assigned_time | TIME | NULL | Actual assigned tee time |
-| assigned_by | INT | FK, NULL | Admin who assigned time |
-| requested_at | DATETIME | NOT NULL | Request timestamp |
-| assigned_at | DATETIME | NULL | Assignment timestamp |
+| requested_at | DATETIME | NOT NULL | Request timestamp (for FIFO ordering) |
 
-> **Note**: Tee times are assigned based on the course's `tee_time_interval` (typically 8, 9, or 10 minutes). The first team gets the event's `tee_time_start`, subsequent teams are spaced by the course interval.
+> **FIFO Queue**: Requests are displayed to administrators sorted by `requested_at` (chronological order, first-come first-served). The display includes team name, golfer count, and list of golfer names.
 
-#### 3.2.11 SCORES
+> **Admin Workflow**: Admin views the chronological request list with golfer names, then manually fills in the assignment_text for each tee time slot based on how to best organize the golfers.
+
+#### 3.2.12 SCORES
 Stores golf scores for event participants (members and guests).
 
 | Column | Type | Constraints | Description |
@@ -490,7 +516,7 @@ Stores golf scores for event participants (members and guests).
 
 > **Score Validation**: Scores must be between 40 and 250 inclusive. Admin can override with audit log entry.
 
-#### 3.2.12 AUDIT_LOG
+#### 3.2.13 AUDIT_LOG
 Tracks all significant system actions.
 
 | Column | Type | Constraints | Description |
@@ -503,7 +529,7 @@ Tracks all significant system actions.
 | details | TEXT | NULL | Additional details/changes |
 | created_at | DATETIME | NOT NULL | Action timestamp |
 
-#### 3.2.13 SYSTEM_SETTINGS
+#### 3.2.14 SYSTEM_SETTINGS
 Stores system-wide configuration including the shared member password.
 
 | Column | Type | Constraints | Description |
@@ -799,34 +825,83 @@ Non-Member Guests:
 
 **Fields:**
 - Event (dropdown of upcoming events where team is registered)
-- Preferred Time (time picker - intervals based on course's `tee_time_interval`)
-- Notes (optional text area)
+- Notes (optional text area for special requests or preferences)
+
+**Display (read-only):**
+- Number of golfers from registration (participants + guests)
+- List of golfer names
 
 **Workflow:**
-1. Captain selects event and preferred time
-2. Request is submitted with "pending" status
-3. Administrator reviews requests
-4. Administrator assigns actual tee time
-5. Captain and team members see assigned time on dashboard
+1. Captain selects an event where their team is registered
+2. System displays golfer count and names from the event registration
+3. Captain optionally adds notes (e.g., "Prefer early time" or "Need adjacent slot with IT Hackers")
+4. Request is submitted with "pending" status and timestamp
+5. Administrator reviews requests in chronological order (FIFO)
+6. Administrator assigns golfers to tee time slots
+7. Captain and team members see assigned times on dashboard
 
-#### 5.3.3 Tee Time Assignment Form (Administrator)
+#### 5.3.3 Tee Time Slot Assignment (Administrator)
 
-**Purpose:** Allow administrators to assign tee times to teams.
+**Purpose:** Allow administrators to assign golfers to auto-generated tee time slots.
 
-**Display:**
-- List of pending tee time requests
-- Event details
-- Team name
-- Requested preferred time
-- Course tee time interval (8, 9, or 10 minutes)
+**Layout:**
+```
+EVENT: Spring Championship - March 15, 2026
+COURSE: Pine Valley Golf Club (8-minute intervals)
+START TIME: 8:00 AM
 
-**Fields:**
-- Assigned Time (time picker - intervals based on course's `tee_time_interval`)
+TEE TIME REQUESTS (Chronological Queue - First Come First Served)
+Total Pending Golfers: 21
++-------+------------------+----------+---------------------------------+-----------+
+| Order | Team             | Golfers  | Golfer Names                    | Requested |
++-------+------------------+----------+---------------------------------+-----------+
+| 1     | Legal Eagles     | 8        | Tom J, Bob S, Ryan S (guest),   | Mar 1     |
+|       |                  |          | Mary W, Jim K, Pat L, Sue M,    | 9:15 AM   |
+|       |                  |          | Dave N                          |           |
++-------+------------------+----------+---------------------------------+-----------+
+| 2     | Accounting Aces  | 4        | John D, Jane E, Mike F, Lisa G  | Mar 1     |
+|       |                  |          |                                 | 10:30 AM  |
++-------+------------------+----------+---------------------------------+-----------+
+| 3     | IT Hackers       | 6        | Sam H, Tim I, Ann J, Bill K,    | Mar 2     |
+|       |                  |          | Carol L, Dan M                  | 2:22 PM   |
++-------+------------------+----------+---------------------------------+-----------+
+| 4     | Marketing Hawks  | 3        | Eve N, Frank O, Grace P         | Mar 3     |
+|       |                  |          |                                 | 8:45 AM   |
++-------+------------------+----------+---------------------------------+-----------+
+
+TEE TIME SLOTS (Auto-generated until ~12:00 noon)
++------+--------+--------------------------------------------------------------+
+| Slot | Time   | Assignment (freeform text - 4 golfers max per slot)          |
++------+--------+--------------------------------------------------------------+
+| 1    | 8:00   | [Legal Eagles: Tom J, Bob S, guest Ryan S, Mary W          ] |
+| 2    | 8:08   | [Legal Eagles: Jim K, Pat L, Sue M, Dave N                 ] |
+| 3    | 8:16   | [Accounting Aces: John D, Jane E, Mike F, Lisa G           ] |
+| 4    | 8:24   | [IT Hackers: Sam H, Tim I, Ann J, Bill K                   ] |
+| 5    | 8:32   | [IT Hackers: Carol L, Dan M + Marketing Hawks: Eve N, Frank] |
+| 6    | 8:40   | [Marketing Hawks: Grace P                                  ] |
+| ...  | ...    | [                                                          ] |
+| 30   | 11:52  | [                                                          ] |
++------+--------+--------------------------------------------------------------+
+
+[Save All Assignments] [Generate More Slots]
+```
+
+**Workflow:**
+1. System auto-generates tee time slots from event's `tee_time_start` using course's `tee_time_interval`
+2. Slots are generated until approximately 12:00 noon (last slot that starts before noon)
+3. Admin views pending requests sorted by `requested_at` (FIFO queue)
+4. Request display shows: team name, golfer count, and **list of golfer names**
+5. Admin manually types assignment text into each slot's text area
+6. Admin clicks "Save All Assignments" to persist
+7. Admin marks each request as "assigned" once their golfers are placed
 
 **Features:**
-- Show existing assigned times to avoid conflicts
-- Visual timeline of tee times for the event
-- Display course interval for reference
+- Auto-generated slots based on event start time and course interval
+- Slots extend until 12:00 noon cutoff
+- Display total pending golfer count to help admin plan
+- Freeform text entry for flexible assignment descriptions
+- Chronological request queue shows FIFO priority
+- Golfer names displayed to help admin type assignments
 
 #### 5.3.4 Team Score Entry Form (Team Captain)
 
@@ -1402,6 +1477,7 @@ The following features are identified for potential future development:
 | 1.1 | 2026-01-18 | Architecture Review | Expanded Section 9 with detailed technology stack comparison (PHP/Laravel vs Next.js/TypeScript), added pros/cons analysis, hosting recommendations, and architecture diagrams |
 | 1.2 | 2026-01-19 | Architecture Review | Merged clarifications: Added GUEST_SCORES table for guest players, updated tee time system (8-min default increment, event start time, system settings), added soft delete (is_active) to MEMBERS/TEAMS, consolidated primary team to TEAM_MEMBERS.is_primary_team, specified report sorting (team name A-Z), clarified photo URLs (not uploads), added registration_deadline and tee_time_start to EVENTS |
 | 1.3 | 2026-01-20 | Data Model Revision | **Major restructuring**: (1) Members now belong to exactly ONE team (removed multi-team support, added team_id to MEMBERS, removed TEAM_MEMBERS table), (2) Added event registration workflow with EVENT_PARTICIPANTS and EVENT_GUESTS tables to track who plays in each event, (3) Moved tee_time_interval from SYSTEM_SETTINGS to COURSES table (per-course configuration), (4) Unified SCORES table now references participant_id or guest_id instead of member_id (removed separate GUEST_SCORES table), (5) Added Event Registration Form for captains to select participating members and guests, (6) Updated score entry to work with registered participants only, (7) Clarified registration stop time (around 12 noon based on course interval) |
+| 1.4 | 2026-01-23 | Tee Time Revision | **Tee time system overhaul**: (1) Added new TEE_TIME_SLOTS table for auto-generated slots with freeform assignment text, (2) Simplified TEE_TIME_REQUESTS to FIFO queue with golfer_count and notes fields, (3) Removed preferred_time and assigned_time from requests, (4) Admin workflow now shows chronological request queue with golfer names displayed, (5) Tee time slots auto-generate from event start time until ~12:00 noon, (6) Each slot has freeform text area for admin to type golfer assignments (4 golfers max per slot), (7) Updated ERD to include TEE_TIME_SLOTS relationship |
 
 ---
 
