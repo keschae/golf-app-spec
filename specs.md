@@ -687,6 +687,59 @@ The application must be mobile-compatible with:
 - Readable text and appropriately sized tap targets
 - Optimized images for mobile bandwidth
 
+### 4.5 Color Scheme and Branding
+
+The application should use a golf-inspired color palette:
+
+| Role | Color | Hex | Usage |
+|------|-------|-----|-------|
+| **Primary** | Bright Grass Green | `#4CAF50` | Buttons, links, highlights, success states |
+| **Primary Dark** | Forest Green | `#388E3C` | Hover states, active elements |
+| **Primary Light** | Light Green | `#81C784` | Backgrounds, subtle highlights |
+| **Neutral Dark** | Charcoal Black | `#212121` | Headers, primary text, navigation background |
+| **Neutral Medium** | Dark Gray | `#424242` | Secondary navigation, borders |
+| **Neutral Light** | Light Gray | `#E0E0E0` | Card backgrounds, dividers |
+| **Background** | Off-White | `#FAFAFA` | Page backgrounds |
+| **Text Primary** | Near Black | `#212121` | Body text |
+| **Text Secondary** | Medium Gray | `#757575` | Captions, secondary text |
+| **Error** | Red | `#D32F2F` | Error messages, validation |
+| **Warning** | Amber | `#FFC107` | Warning messages |
+
+**Tailwind CSS Configuration:**
+```javascript
+// tailwind.config.js
+module.exports = {
+  theme: {
+    extend: {
+      colors: {
+        'golf-green': {
+          50: '#E8F5E9',
+          100: '#C8E6C9',
+          200: '#A5D6A7',
+          300: '#81C784',
+          400: '#66BB6A',
+          500: '#4CAF50',  // Primary
+          600: '#43A047',
+          700: '#388E3C',  // Primary Dark
+          800: '#2E7D32',
+          900: '#1B5E20',
+        }
+      }
+    }
+  }
+}
+```
+
+**Navigation Styling:**
+- Navigation bar: Charcoal black (`#212121`) background with white text
+- Active nav item: Bright green underline or highlight
+- Hover states: Slightly lighter gray or green tint
+
+**Button Styling:**
+- Primary buttons: Bright green background with white text
+- Secondary buttons: Gray outline with green text
+- Hover: Darker green shade
+
 ---
 
 ## 5. Forms and CRUD Operations
@@ -1477,7 +1530,7 @@ The following features are identified for potential future development:
 | 1.1 | 2026-01-18 | Architecture Review | Expanded Section 9 with detailed technology stack comparison (PHP/Laravel vs Next.js/TypeScript), added pros/cons analysis, hosting recommendations, and architecture diagrams |
 | 1.2 | 2026-01-19 | Architecture Review | Merged clarifications: Added GUEST_SCORES table for guest players, updated tee time system (8-min default increment, event start time, system settings), added soft delete (is_active) to MEMBERS/TEAMS, consolidated primary team to TEAM_MEMBERS.is_primary_team, specified report sorting (team name A-Z), clarified photo URLs (not uploads), added registration_deadline and tee_time_start to EVENTS |
 | 1.3 | 2026-01-20 | Data Model Revision | **Major restructuring**: (1) Members now belong to exactly ONE team (removed multi-team support, added team_id to MEMBERS, removed TEAM_MEMBERS table), (2) Added event registration workflow with EVENT_PARTICIPANTS and EVENT_GUESTS tables to track who plays in each event, (3) Moved tee_time_interval from SYSTEM_SETTINGS to COURSES table (per-course configuration), (4) Unified SCORES table now references participant_id or guest_id instead of member_id (removed separate GUEST_SCORES table), (5) Added Event Registration Form for captains to select participating members and guests, (6) Updated score entry to work with registered participants only, (7) Clarified registration stop time (around 12 noon based on course interval) |
-| 1.4 | 2026-01-23 | Tee Time Revision | **Tee time system overhaul**: (1) Added new TEE_TIME_SLOTS table for auto-generated slots with freeform assignment text, (2) Simplified TEE_TIME_REQUESTS to FIFO queue with golfer_count and notes fields, (3) Removed preferred_time and assigned_time from requests, (4) Admin workflow now shows chronological request queue with golfer names displayed, (5) Tee time slots auto-generate from event start time until ~12:00 noon, (6) Each slot has freeform text area for admin to type golfer assignments (4 golfers max per slot), (7) Updated ERD to include TEE_TIME_SLOTS relationship |
+| 1.4 | 2026-01-23 | Tee Time Revision | **Tee time system overhaul**: (1) Added new TEE_TIME_SLOTS table for auto-generated slots with freeform assignment text, (2) Simplified TEE_TIME_REQUESTS to FIFO queue with golfer_count and notes fields, (3) Removed preferred_time and assigned_time from requests, (4) Admin workflow now shows chronological request queue with golfer names displayed, (5) Tee time slots auto-generate from event start time until ~12:00 noon, (6) Each slot has freeform text area for admin to type golfer assignments (4 golfers max per slot), (7) Updated ERD to include TEE_TIME_SLOTS relationship, (8) Added Section 4.5 Color Scheme and Branding with bright grass green primary color and black/gray navigation |
 
 ---
 
