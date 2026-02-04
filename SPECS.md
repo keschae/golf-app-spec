@@ -1,8 +1,8 @@
 # MCSGA Golf Association Portal
 ## Application Specification and Requirements Document
 
-**Version:** 1.4
-**Date:** January 23, 2026
+**Version:** 1.5
+**Date:** February 3, 2026
 **Status:** Draft
 
 ---
@@ -104,7 +104,10 @@ graph TD
   - Enter golf scores for participating team members and guests at events
   - View team-specific reports
 
-> **Note**: A team may have more than one captain. A member belongs to exactly one team at a time.
+> **Note**:
+> - A team may have **multiple captains**
+> - A member can only be captain of **ONE team** at a time
+> - A member CAN be both an **administrator AND a team captain** simultaneously (roles are not mutually exclusive)
 
 #### 2.2.3 Regular Member
 - **Access Level**: Basic read access with limited profile editing
@@ -163,11 +166,11 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    MEMBERS }o--|| TEAMS : belongs_to
+    MEMBERS ||--o{ TEAM_MEMBERS : belongs_to
+    TEAMS ||--o{ TEAM_MEMBERS : has
     MEMBERS ||--o{ TEAM_CAPTAINS : can_be
     TEAMS ||--o{ TEAM_CAPTAINS : has
     EVENTS ||--|| COURSES : held_at
-    COURSES ||--o{ COURSE_PHOTOS : has
     EVENTS ||--o{ EVENT_REGISTRATIONS : has
     TEAMS ||--o{ EVENT_REGISTRATIONS : registers
     EVENT_REGISTRATIONS ||--o{ EVENT_PARTICIPANTS : includes
@@ -175,7 +178,8 @@ erDiagram
     EVENT_REGISTRATIONS ||--o{ EVENT_GUESTS : includes
     MEMBERS ||--o{ EVENT_GUESTS : can_be_guest
     EVENT_PARTICIPANTS ||--o| SCORES : has_score
-    EVENT_GUESTS ||--o| SCORES : has_score
+    EVENTS ||--o{ GUEST_SCORES : has
+    TEAMS ||--o{ GUEST_SCORES : has
     EVENTS ||--o{ TEE_TIME_SLOTS : has_slots
     TEAMS ||--o{ TEE_TIME_REQUESTS : requests
     EVENTS ||--o{ TEE_TIME_REQUESTS : for
@@ -187,10 +191,9 @@ erDiagram
         string first_name
         string last_name
         string phone
-        string password_hash
+        string password_hash "Required for all members"
         boolean is_admin
         boolean is_active
-        int team_id FK
         datetime created_at
         datetime updated_at
     }
@@ -204,10 +207,18 @@ erDiagram
         datetime updated_at
     }
     
-    TEAM_CAPTAINS {
+    TEAM_MEMBERS {
         int id PK
         int team_id FK
         int member_id FK
+        boolean is_primary_team
+        datetime joined_at
+    }
+    
+    TEAM_CAPTAINS {
+        int id PK
+        int team_id FK
+        int member_id FK_UK "Unique - one team per captain"
         datetime assigned_at
     }
     
@@ -220,19 +231,13 @@ erDiagram
         string state
         string zip_code
         string google_maps_url
+        string photo_url_1 "Max 3 photos inline"
+        string photo_url_2
+        string photo_url_3
         int tee_time_interval
         text course_details
         datetime created_at
         datetime updated_at
-    }
-    
-    COURSE_PHOTOS {
-        int id PK
-        int course_id FK
-        string photo_url
-        string caption
-        int display_order
-        datetime uploaded_at
     }
     
     EVENTS {
@@ -241,7 +246,7 @@ erDiagram
         date event_date
         int course_id FK
         text description
-        string status
+        string status "upcoming|completed|cancelled"
         date registration_deadline
         time tee_time_start
         datetime created_at
@@ -288,17 +293,32 @@ erDiagram
         int team_id FK
         int requested_by FK
         int golfer_count
-        text notes
-        string status
+        text request_notes "Free-form preferences"
+        datetime assigned_time
+        string status "pending|assigned"
+        int assigned_by FK
         datetime requested_at
+        datetime updated_at
     }
     
     SCORES {
         int id PK
         int event_id FK
-        int participant_id FK
-        int guest_id FK
-        int total_score
+        int member_id FK
+        int team_id FK
+        int total_score "40-250 range"
+        int entered_by FK
+        datetime created_at
+        datetime updated_at
+    }
+    
+    GUEST_SCORES {
+        int id PK
+        int event_id FK
+        int team_id FK
+        string first_name
+        string last_name
+        int total_score "40-250 range"
         int entered_by FK
         datetime created_at
         datetime updated_at
@@ -307,26 +327,19 @@ erDiagram
     AUDIT_LOG {
         int id PK
         int user_id FK
-        string action_type
+        string action_type "login|logout|create|update|delete"
         string table_name
         int record_id
         text details
+        string ip_address
         datetime created_at
-    }
-    
-    SYSTEM_SETTINGS {
-        int id PK
-        string setting_key UK
-        string setting_value
-        datetime updated_at
-        int updated_by FK
     }
 ```
 
 ### 3.2 Core Tables
 
 #### 3.2.1 MEMBERS
-Stores all individual members of the MCSGA. Each member belongs to exactly one team.
+Stores all individual members of the MCSGA. Members can belong to multiple teams via the TEAM_MEMBERS linking table, with one designated as primary.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
@@ -335,14 +348,17 @@ Stores all individual members of the MCSGA. Each member belongs to exactly one t
 | first_name | VARCHAR(100) | NOT NULL | Member's first name |
 | last_name | VARCHAR(100) | NOT NULL | Member's last name |
 | phone | VARCHAR(20) | NULL | Contact phone number |
-| password_hash | VARCHAR(255) | NULL | Individual password (Admins/Captains only) |
+| password_hash | VARCHAR(255) | NOT NULL | Password hash (shared password for regular members, individual for admins/captains) |
 | is_admin | BOOLEAN | DEFAULT FALSE | Administrator flag |
 | is_active | BOOLEAN | DEFAULT TRUE | Soft delete flag (false = deleted) |
-| team_id | INT | FK, NULL | Reference to member's team (NULL if unassigned) |
 | created_at | DATETIME | NOT NULL | Record creation timestamp |
 | updated_at | DATETIME | NOT NULL | Last update timestamp |
 
-> **Note**: A member can only belong to ONE team at a time. The `team_id` directly references the TEAMS table.
+> **Note**: The `password_hash` field is **required** for all members:
+> - **Regular members**: Contains the shared password hash, updated by admin via the shared password change function
+> - **Admins/Captains**: Contains their individual password hash
+>
+> Team membership is managed through the `TEAM_MEMBERS` linking table, not a direct foreign key.
 
 #### 3.2.2 TEAMS
 Stores team information.
@@ -356,20 +372,40 @@ Stores team information.
 | created_at | DATETIME | NOT NULL | Record creation timestamp |
 | updated_at | DATETIME | NOT NULL | Last update timestamp |
 
-#### 3.2.3 TEAM_CAPTAINS (Linking Table)
-Designates which members are captains of which teams.
+#### 3.2.3 TEAM_MEMBERS (Linking Table)
+Links members to teams. Each member can belong to multiple teams, with one designated as primary.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | INT | PK, AUTO_INCREMENT | Unique identifier |
 | team_id | INT | FK, NOT NULL | Reference to team |
 | member_id | INT | FK, NOT NULL | Reference to member |
+| is_primary_team | BOOLEAN | DEFAULT FALSE | Whether this is the member's primary team |
+| joined_at | DATETIME | NOT NULL | When member joined the team |
+
+> **Unique Constraint**: (team_id, member_id) - A member can only be added once per team.
+>
+> **Note**: Each member should have exactly one `is_primary_team = TRUE` record across all their team memberships.
+
+#### 3.2.4 TEAM_CAPTAINS (Linking Table)
+Designates which members are captains of which teams.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | INT | PK, AUTO_INCREMENT | Unique identifier |
+| team_id | INT | FK, NOT NULL | Reference to team |
+| member_id | INT | FK, UNIQUE, NOT NULL | Reference to member |
 | assigned_at | DATETIME | NOT NULL | When captain role was assigned |
 
-> **Note**: A team can have multiple captains. A captain must be a member of the team they captain.
+> **Constraints**:
+> - **One team per captain**: The UNIQUE constraint on `member_id` ensures a member can only captain ONE team at a time
+> - **Multiple captains per team**: A team can have multiple captains (no unique constraint on team_id)
+> - **Dual roles allowed**: A member CAN be both an administrator AND a team captain simultaneously
+>
+> **Note**: A captain must be a member of the team they captain (enforced at application level).
 
-#### 3.2.4 COURSES
-Stores golf course information including tee time interval.
+#### 3.2.5 COURSES
+Stores golf course information including tee time interval and up to 3 photo URLs.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
@@ -381,24 +417,17 @@ Stores golf course information including tee time interval.
 | state | VARCHAR(50) | NULL | State |
 | zip_code | VARCHAR(20) | NULL | ZIP/Postal code |
 | google_maps_url | VARCHAR(500) | NULL | Link to Google Maps |
+| photo_url_1 | VARCHAR(500) | NULL | First photo URL |
+| photo_url_2 | VARCHAR(500) | NULL | Second photo URL |
+| photo_url_3 | VARCHAR(500) | NULL | Third photo URL |
 | tee_time_interval | INT | DEFAULT 8 | Minutes between tee times (typically 8, 9, or 10) |
 | course_details | TEXT | NULL | Additional course details |
 | created_at | DATETIME | NOT NULL | Record creation timestamp |
 | updated_at | DATETIME | NOT NULL | Last update timestamp |
 
-> **Note**: The `tee_time_interval` is course-specific and typically 8, 9, or 10 minutes depending on the course's pace of play requirements.
-
-#### 3.2.5 COURSE_PHOTOS
-Stores photos associated with courses.
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| id | INT | PK, AUTO_INCREMENT | Unique identifier |
-| course_id | INT | FK, NOT NULL | Reference to course |
-| photo_url | VARCHAR(500) | NOT NULL | URL/path to photo |
-| caption | VARCHAR(255) | NULL | Photo caption |
-| display_order | INT | DEFAULT 0 | Order for display |
-| uploaded_at | DATETIME | NOT NULL | Upload timestamp |
+> **Simplified Photo Storage**: Photos are stored as up to 3 inline URL fields instead of a separate table. This reduces database complexity while meeting the business requirement of maximum 3 photos per course.
+>
+> **Tee Time Interval**: Course-specific setting that determines the gap between tee times. Most courses use 8-minute intervals, but some may require 9 or 10 minutes.
 
 #### 3.2.6 EVENTS
 Stores golf outing events.
@@ -410,12 +439,17 @@ Stores golf outing events.
 | event_date | DATE | NOT NULL | Date of the event |
 | course_id | INT | FK, NOT NULL | Reference to course |
 | description | TEXT | NULL | Event description |
-| status | VARCHAR(50) | DEFAULT 'upcoming' | Event status (upcoming, active, completed, cancelled) |
+| status | VARCHAR(50) | DEFAULT 'upcoming' | Event status |
 | registration_deadline | DATE | NULL | Last date teams can register |
 | tee_time_start | TIME | NULL | Starting time for first tee time slot |
 | created_at | DATETIME | NOT NULL | Record creation timestamp |
 | updated_at | DATETIME | NOT NULL | Last update timestamp |
 
+> **Event Status Values**:
+> - `upcoming` - Event is scheduled and visible on member dashboards
+> - `completed` - Event has concluded; no longer shown on dashboard but scores remain editable
+> - `cancelled` - Event was cancelled; hidden from dashboard and tee times invalidated
+>
 > **Note**: Each event is associated with exactly one course. The same course may host multiple events across different dates/years.
 
 > **Tee Time Calculation**: Subsequent tee times are calculated by adding the course's `tee_time_interval` (typically 8, 9, or 10 minutes) to the previous slot, starting from `tee_time_start`. Registration typically closes around 12:00 noon, with the exact cutoff determined by the last tee time slot that fits before noon based on the course interval.
@@ -490,63 +524,107 @@ Stores team tee time requests as a queue. Administrators assign slots on a first
 | team_id | INT | FK, NOT NULL | Reference to team |
 | requested_by | INT | FK, NOT NULL | Member who made request |
 | golfer_count | INT | NOT NULL | Number of golfers requesting tee time |
-| notes | TEXT | NULL | Optional notes from captain |
-| status | VARCHAR(50) | DEFAULT 'pending' | Status (pending, assigned, cancelled) |
+| request_notes | TEXT | NULL | Free-form preferences from captain |
+| assigned_time | DATETIME | NULL | Actual assigned tee time |
+| status | VARCHAR(50) | DEFAULT 'pending' | Status (pending, assigned) |
+| assigned_by | INT | FK, NULL | Admin who assigned the time |
 | requested_at | DATETIME | NOT NULL | Request timestamp (for FIFO ordering) |
+| updated_at | DATETIME | NOT NULL | Last update timestamp |
+
+> **Unique Constraint**: (event_id, team_id) - One request per team per event.
+>
+> **Status Values**:
+> - `pending` - Request submitted, awaiting admin assignment
+> - `assigned` - Admin has assigned a tee time
+>
+> **Note**: There is no "rejected" status. Every team will receive an assigned time.
 
 > **FIFO Queue**: Requests are displayed to administrators sorted by `requested_at` (chronological order, first-come first-served). The display includes team name, golfer count, and list of golfer names.
 
-> **Admin Workflow**: Admin views the chronological request list with golfer names, then manually fills in the assignment_text for each tee time slot based on how to best organize the golfers.
+> **Workflow**:
+> 1. Captain submits request with free-form preferences in `request_notes` (e.g., "Prefer early time" or "Need adjacent slot with IT Hackers")
+> 2. Admin views the chronological request list with golfer names
+> 3. Admin assigns actual `assigned_time` and updates status to "assigned"
+> 4. Captain cannot modify requests after submission
 
 #### 3.2.12 SCORES
-Stores golf scores for event participants (members and guests).
+Stores golf scores for registered team member participants.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | INT | PK, AUTO_INCREMENT | Unique identifier |
 | event_id | INT | FK, NOT NULL | Reference to event |
-| participant_id | INT | FK, NULL | Reference to EVENT_PARTICIPANTS (for members) |
-| guest_id | INT | FK, NULL | Reference to EVENT_GUESTS (for guests) |
+| member_id | INT | FK, NOT NULL | Reference to member |
+| team_id | INT | FK, NOT NULL | Reference to team (for reporting) |
 | total_score | INT | NOT NULL, CHECK (40-250) | Total golf score (valid range: 40-250) |
 | entered_by | INT | FK, NOT NULL | Captain/Admin who entered score |
 | created_at | DATETIME | NOT NULL | Record creation timestamp |
 | updated_at | DATETIME | NOT NULL | Last update timestamp |
 
-> **Constraint**: Either `participant_id` OR `guest_id` must be set (not both, not neither). This allows a single SCORES table to track scores for both registered members and guest players.
-
+> **Unique Constraint**: (event_id, member_id) - One score per member per event.
+>
+> **Score Data**: Stored as a simple total score integer. There is no hole-by-hole tracking.
+>
 > **Score Validation**: Scores must be between 40 and 250 inclusive. Admin can override with audit log entry.
+>
+> **Editability**: Scores can be edited by captains or administrators even after an event is marked as "completed".
 
-#### 3.2.13 AUDIT_LOG
+#### 3.2.13 GUEST_SCORES
+Stores golf scores for guest players. Guests can be association members playing with a different team or non-members.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | INT | PK, AUTO_INCREMENT | Unique identifier |
+| event_id | INT | FK, NOT NULL | Reference to event |
+| team_id | INT | FK, NOT NULL | Reference to team hosting the guest |
+| first_name | VARCHAR(100) | NOT NULL | Guest's first name |
+| last_name | VARCHAR(100) | NOT NULL | Guest's last name |
+| total_score | INT | NOT NULL, CHECK (40-250) | Total golf score (valid range: 40-250) |
+| entered_by | INT | FK, NOT NULL | Captain/Admin who entered score |
+| created_at | DATETIME | NOT NULL | Record creation timestamp |
+| updated_at | DATETIME | NOT NULL | Last update timestamp |
+
+> **Guest Score Use Cases**:
+> - **Association member playing with different team**: A member from the golf association who plays with a team other than their primary team for a specific event
+> - **Non-member guest**: Someone who is not a member of the association at all but participates in an event
+>
+> **Note**: The captain enters the guest's first name, last name, and total score. Guest scores appear in event reports alongside regular member scores. Guests do not have login accounts.
+
+#### 3.2.14 AUDIT_LOG
 Tracks all significant system actions.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | INT | PK, AUTO_INCREMENT | Unique identifier |
 | user_id | INT | FK, NULL | User who performed action |
-| action_type | VARCHAR(50) | NOT NULL | Type of action (login, logout, create, update, delete) |
-| table_name | VARCHAR(100) | NULL | Affected table (for CRUD operations) |
-| record_id | INT | NULL | Affected record ID |
-| details | TEXT | NULL | Additional details/changes |
+| action_type | VARCHAR(50) | NOT NULL | Type of action |
+| entity_type | VARCHAR(100) | NULL | Affected entity type (member, team, event, score, course, etc.) |
+| entity_id | INT | NULL | Affected entity ID |
+| details | TEXT | NULL | JSON string with additional details/changes |
+| ip_address | VARCHAR(45) | NULL | IP address of the user |
 | created_at | DATETIME | NOT NULL | Action timestamp |
 
-#### 3.2.14 SYSTEM_SETTINGS
-Stores system-wide configuration including the shared member password.
+> **Action Types**:
+> - `login` - Successful user login
+> - `logout` - User logout
+> - `lockout` - Failed login attempts (if account lockout is implemented)
+> - `create` - New record created
+> - `update` - Record modified
+> - `delete` - Record removed
+>
+> **Note**: Audit logging captures actions for core tables: Member, Team, Event, Score, Course.
 
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| id | INT | PK, AUTO_INCREMENT | Unique identifier |
-| setting_key | VARCHAR(100) | UNIQUE, NOT NULL | Setting identifier |
-| setting_value | TEXT | NULL | Setting value |
-| updated_at | DATETIME | NOT NULL | Last update timestamp |
-| updated_by | INT | FK, NULL | Admin who last updated |
+### 3.3 Shared Password Storage
 
-> **Key Settings**:
-> - `shared_member_password` - The hashed shared password for regular members
-> - `default_tee_time_slots` - Maximum number of tee time slots per event (default: **100**)
+> **Important**: The shared member password is **NOT** stored in a separate SYSTEM_SETTINGS table. Instead, it is stored directly in each regular member's `password_hash` field.
+>
+> **How it works**:
+> 1. When an administrator changes the shared password, the system updates the `password_hash` field for all users with regular member status (non-admin, non-captain)
+> 2. This simplifies authentication - all users validate against their own `password_hash` regardless of role
+> 3. There is no password reset process for regular members; if there is a breach, admin simply resets the shared password
+> 4. This policy reduces administrative overhead by eliminating support requests about forgotten passwords
 
-> **Note**: Tee time interval is now stored per-course in the COURSES table, not as a system setting.
-
-### 3.3 Deletion Behavior Rules
+### 3.4 Deletion Behavior Rules
 
 | Entity | Deletion Rule |
 |--------|---------------|
@@ -1498,6 +1576,34 @@ The following features are identified for potential future development:
 
 ## Clarifications
 
+### Session 2026-02-02 (Latest)
+
+**Password Management:**
+- Q: How is the shared password stored? → A: The shared password is stored directly in each regular member's `passwordHash` field, NOT in a separate system_settings table.
+- Q: Can regular members create individual passwords? → A: No. Regular members always use the shared password. Only admins and captains have individual passwords.
+- Q: What happens if there's a password breach? → A: Administrator simply resets the shared password for all regular members. No password reset process is needed.
+
+**Team Captain Rules:**
+- Q: Can a member captain multiple teams? → A: No. A member can only be captain of ONE team at a time (enforced by unique constraint on member_id in TEAM_CAPTAINS).
+- Q: Can one team have multiple captains? → A: Yes. A team can have multiple members elevated to captain status.
+- Q: Can a member be both admin and captain? → A: Yes. Roles are not mutually exclusive.
+
+**Course Photos:**
+- Q: How are course photos stored? → A: As up to 3 inline URL fields (photoUrl1, photoUrl2, photoUrl3) on the Course table. No separate COURSE_PHOTOS table.
+
+**Event Registration:**
+- Q: Can admins remove a team's registration? → A: Yes. Captains cannot unregister their own team, but admins can remove registrations.
+- Q: What is the minimum team size? → A: 2 members minimum; no maximum limit.
+
+**Tee Time Requests:**
+- Q: How do captains specify preferred times? → A: Free-form text notes (e.g., "Prefer early time"). No structured time picker.
+- Q: What status values exist for requests? → A: Only `pending` and `assigned`. No "rejected" status - every team receives an assigned time.
+- Q: Can captains modify requests after submission? → A: No.
+
+**Scores:**
+- Q: What data is stored for scores? → A: Simple total score (integer). No hole-by-hole tracking.
+- Q: Can scores be edited after event completion? → A: Yes, by captains or administrators.
+
 ### Session 2026-01-20
 
 - Q: When a captain adds a member who is already on another team to their roster, what should happen? → A: Require confirmation - show warning dialog before moving member from another team.
@@ -1531,6 +1637,7 @@ The following features are identified for potential future development:
 | 1.2 | 2026-01-19 | Architecture Review | Merged clarifications: Added GUEST_SCORES table for guest players, updated tee time system (8-min default increment, event start time, system settings), added soft delete (is_active) to MEMBERS/TEAMS, consolidated primary team to TEAM_MEMBERS.is_primary_team, specified report sorting (team name A-Z), clarified photo URLs (not uploads), added registration_deadline and tee_time_start to EVENTS |
 | 1.3 | 2026-01-20 | Data Model Revision | **Major restructuring**: (1) Members now belong to exactly ONE team (removed multi-team support, added team_id to MEMBERS, removed TEAM_MEMBERS table), (2) Added event registration workflow with EVENT_PARTICIPANTS and EVENT_GUESTS tables to track who plays in each event, (3) Moved tee_time_interval from SYSTEM_SETTINGS to COURSES table (per-course configuration), (4) Unified SCORES table now references participant_id or guest_id instead of member_id (removed separate GUEST_SCORES table), (5) Added Event Registration Form for captains to select participating members and guests, (6) Updated score entry to work with registered participants only, (7) Clarified registration stop time (around 12 noon based on course interval) |
 | 1.4 | 2026-01-23 | Tee Time Revision | **Tee time system overhaul**: (1) Added new TEE_TIME_SLOTS table for auto-generated slots with freeform assignment text, (2) Simplified TEE_TIME_REQUESTS to FIFO queue with golfer_count and notes fields, (3) Removed preferred_time and assigned_time from requests, (4) Admin workflow now shows chronological request queue with golfer names displayed, (5) Tee time slots auto-generate from event start time until ~12:00 noon, (6) Each slot has freeform text area for admin to type golfer assignments (4 golfers max per slot), (7) Updated ERD to include TEE_TIME_SLOTS relationship, (8) Added Section 4.5 Color Scheme and Branding with bright grass green primary color and black/gray navigation |
+| 1.5 | 2026-02-03 | Clarifications Merge | **Merged clarifications from specs/clarifications.md and implementation specs**: (1) password_hash field is now REQUIRED for all members - shared password stored directly in member records, NOT in SYSTEM_SETTINGS table, (2) Added TEAM_MEMBERS linking table with is_primary_team flag to support multi-team membership, (3) Added GUEST_SCORES table separate from SCORES for guest player scores, (4) Team captain constraints clarified: one team per captain (unique member_id), multiple captains per team allowed, admin+captain dual roles allowed, (5) Course photos simplified to 3 inline URL fields (photo_url_1/2/3) instead of separate COURSE_PHOTOS table, (6) AUDIT_LOG updated with entity_type, entity_id, ip_address fields and documented action types (login, logout, lockout, create, update, delete), (7) TEE_TIME_REQUESTS updated with assigned_time and assigned_by fields, (8) Updated ERD to reflect all schema changes, (9) Added comprehensive clarifications section with Q&A format |
 
 ---
 
