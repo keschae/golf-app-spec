@@ -218,7 +218,7 @@ erDiagram
     TEAM_CAPTAINS {
         int id PK
         int team_id FK
-        int member_id FK_UK "Unique - one team per captain"
+        int member_id FK "Unique - one team per captain"
         datetime assigned_at
     }
     
